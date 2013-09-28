@@ -3,7 +3,6 @@
 from Bio import Medline, Entrez  # biopython
 from datetime import datetime
 import elasticsearch
-from lxml import etree
 import random
 import re
 import time
@@ -12,10 +11,10 @@ import time
 es_server_url = 'cluster-7-slave-00.sl.hackreduce.net:9200'
 
 
-def index_article(record, doc_id):
+def index_article(record):
 
     d = {}
-    d['docId'] = doc_id
+    d['docId'] = record['MedlineCitation']['PMID'].title()
     d['DateRevised'] = record['MedlineCitation']['DateRevised']
     d['DateCreated'] = record['MedlineCitation']['DateCreated']
 
@@ -36,30 +35,34 @@ def index_article(record, doc_id):
     es.index(
         index='pubmed',
         doc_type='article',
-        id=doc_id,
+        id=d['docId'],
         body=d
     )
     
 
-def get_article(doc_id):
-    handle = Entrez.efetch(db='pubmed', id='%s' % doc_id, rettype='medline', retmode='xml')
+def get_articles(doc_ids):
+    handle = Entrez.efetch(db='pubmed', id='%s' % doc_ids, rettype='medline', retmode='xml')
     articles = Entrez.read(handle)
-    if not articles:
-        return None
-    return articles[0]
+    return articles
 
 
-def index_articles(start_id=50000, num_docs=1000):
-    for doc_id in range(start_id, start_id + num_docs):
+def index_articles(start_id=50000, num_docs=1000, batch_size=100):
+    doc_id = start_id
+    
+    while doc_id < start_id + num_docs:
+        # Fetch and index batch_size articles at a time
+        ids = [x for x in range(doc_id, doc_id + batch_size)]
         try:
-            article = get_article(doc_id)
-            index_article(article, doc_id)
+            for article in get_articles(ids):
+                index_article(article)
+
+            print 'Indexed batch: %s - %s' % (doc_id, doc_id + batch_size)
+
         except Exception as e:
             print 'Exception: %s' % e
 
-        if random.randint(0, 10) == 0:
-            print 'Indexed doc: %s' % doc_id
-        time.sleep(0.5)  # play nice
+        time.sleep(0.4)  # play nice with their API
+        doc_id += batch_size
 
 
 if __name__ == "__main__":
@@ -68,8 +71,10 @@ if __name__ == "__main__":
     
     print 'starting...'
 
-    start_id = 50800
-    num_docs = 1000
+    # start with Mar 2013:
+    #     http://www.ncbi.nlm.nih.gov/pubmed/23000000?report=json&format=text
+    start_id = 2300000
+    num_docs = 10000
     print 'indexing %s articles starting with %s' % (num_docs, start_id)
     index_articles(start_id, num_docs)
 
